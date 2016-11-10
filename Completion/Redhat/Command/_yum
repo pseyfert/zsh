@@ -166,8 +166,8 @@ _yum_history() {
     local -a ID_commands
     local -a ID_range_commands
     local -a package_commands
-    local -a suggests
-    suggests=()
+    local -a alts
+    alts=()
     #ID_commands=('summary' 'info' 'list' 'stats' 'addon-info')
     ID_commands=('addon-info')
     ID_range_commands=('summary' 'info' 'list' 'stats')
@@ -177,24 +177,15 @@ _yum_history() {
     # summary, info, list, stats     : ID, ID range, package name
     # addon-info                     : ID
     # redo, undo, roll-back, sync    : unknown
-    if [[ -n "${ID_commands[(r)$words[2]]}" ]]; then
-      suggests+=(':special IDs:(last)')
-      suggests+=(':IDs:_ids 1')
-    fi
-    if [[ -n "${ID_range_commands[(r)$words[2]]}" ]]; then
-      suggests+=(':transaction ranges:_ranges')
-      suggests+=(':all transactions:(all)')
-    fi
-    if [[ -n "${package_commands[(r)$words[2]]}" ]]; then
-      _yum_installed_pkgs
-      #suggests+=(":packages:($_installed_pkgs)")
-      suggests+=(":packages:_yum_act_on_installed_pkgs")
-    fi
-    if [[ 0 -eq ${#suggests} ]] ; then
+
+    [[ -n "${ID_commands[(r)$words[2]]}" ]] && alts+=('special:special IDs:(last)')
+    [[ -n "${ID_commands[(r)$words[2]]}" ]] && alts+=('regular:IDs:_ids 1')
+    [[ -n "${ID_range_commands[(r)$words[2]]}" ]] && alts+=('regular:transaction ranges:_ranges')
+    [[ -n "${ID_range_commands[(r)$words[2]]}" ]] && alts+=('special:all transactions:(all)')
+    [[ -n "${package_commands[(r)$words[2]]}" ]] && alts+=("packages:packages:_yum_act_on_installed_pkgs")
+
+    (( ${+alts[1]} )) && _alternative "$alts[@]" || \
       _message "unknown expansion for: yum history $words[2]"
-    else
-      _alternative $suggests
-    fi
   fi
   if (( CURRENT == 4 )); then
     if [ "$words[2]" = "addon-info" ]; then
