@@ -99,6 +99,7 @@ _yum()
 		        _yum_cmd_names=(${_yum_cmds%%:*})
 		        _describe -t commands 'commands' _yum_cmd_names
 		      else
+            # help takes one argument
 		        _message 'no more arguments'
 		      fi
 		    else
@@ -120,9 +121,9 @@ _yum_check() {
     local expl
     _wanted arguments expl 'check argument' compadd dependencies \
          duplicates provides all
-    
+  else
+    return 1
   fi
-  return 0
 }
 
 # Expand next argument after 'yum repolist'
@@ -130,8 +131,9 @@ _yum_repolist() {
   if (( CURRENT == 2 )); then
     local expl
     _wanted arguments expl 'repolist arguments' compadd all enabled disabled
+  else
+    return 1
   fi
-  return 0
 }
 
 _yum_ids() {
@@ -144,15 +146,22 @@ _yum_ids() {
   local minusone
 
   maxid=$(yum history stats | grep Transactions | sed "s/.*: //")
+
+  # `$#' is the number of arguments
   ((minusone=$#-1))
-  compadd "${(@)@[1,$minusone]}" $(echo {$@[$#]..$maxid})
+
+  # `$@' are the arguments
+  # `${(@)@[...]}' selects a subrange from $@
+  # `${(@)@[1,$minusone]}' are all except the last argument
+  # `$@[$#]' is the last argument, e.g. the first suggestable ID
+  compadd "${(@)@[1,$minusone]}" {$@[$#]..$maxid}
 }
 
 _yum_ranges() {
   if compset -P '*..'; then
-    _yum_ids ${(S)IPREFIX#..}
+    _yum_ids $@ ${(S)IPREFIX#..}
   else
-    _yum_ids -S '..' 1
+    _yum_ids $@ -S '..' 1
   fi
 }
 
@@ -162,7 +171,7 @@ _yum_history() {
   if (( CURRENT == 2 )); then
     _wanted arguments expl "yum history command" compadd info list \
       packages-list packages-info summary addon-info redo undo \
-      roll-back new sync stats 
+      roll-back new sync stats
   elif (( CURRENT == 3 )); then
     local -a ID_commands
     local -a ID_range_commands
@@ -188,11 +197,10 @@ _yum_history() {
     if (( ${+alts[1]} )) ; then
       _alternative "$alts[@]"
     else
-      _message "unknown expansion for: yum history $words[2]"
+      _default
     fi
   elif (( CURRENT == 4 )); then
     if [ "$words[2]" = "addon-info" ]; then
-      local expl
       _wanted arguments expl 'additional option' compadd saved_tx
     fi
   fi
