@@ -4229,6 +4229,31 @@ arrdup(char **s)
     return y;
 }
 
+/* Duplicate at most max elements of the array s with heap memory */
+
+/**/
+mod_export char **
+arrdup_max(char **s, unsigned max)
+{
+    char **x, **y, **send;
+    int len;
+
+    len = arrlen(s);
+
+    /* Limit has sense only if not equal to len */
+    if (max > len)
+        max = len;
+
+    y = x = (char **) zhalloc(sizeof(char *) * (max + 1));
+
+    send = s + max;
+    while (s < send)
+	*x++ = dupstring(*s++);
+    *x = NULL;
+
+    return y;
+}
+
 /**/
 mod_export char **
 zarrdup(char **s)
@@ -5323,7 +5348,7 @@ mb_metastrlenend(char *ptr, int width, char *eptr)
     char inchar, *laststart;
     size_t ret;
     wchar_t wc;
-    int num, num_in_char;
+    int num, num_in_char, complete;
 
     if (!isset(MULTIBYTE))
 	return ztrlen(ptr);
@@ -5331,6 +5356,7 @@ mb_metastrlenend(char *ptr, int width, char *eptr)
     laststart = ptr;
     ret = MB_INVALID;
     num = num_in_char = 0;
+    complete = 1;
 
     memset(&mb_shiftstate, 0, sizeof(mb_shiftstate));
     while (*ptr && !(eptr && ptr >= eptr)) {
@@ -5339,6 +5365,18 @@ mb_metastrlenend(char *ptr, int width, char *eptr)
 	else
 	    inchar = *ptr;
 	ptr++;
+
+	if (complete && STOUC(inchar) <= STOUC(0x7f)) {
+	    /*
+	     * We rely on 7-bit US-ASCII as a subset, so skip
+	     * multibyte handling if we have such a character.
+	     */
+	    num++;
+	    laststart = ptr;
+	    num_in_char = 0;
+	    continue;
+	}
+
 	ret = mbrtowc(&wc, &inchar, 1, &mb_shiftstate);
 
 	if (ret == MB_INCOMPLETE) {
@@ -5358,6 +5396,7 @@ mb_metastrlenend(char *ptr, int width, char *eptr)
 	     * so we don't count characters twice.
 	     */
 	    num_in_char++;
+	    complete = 0;
 	} else {
 	    if (ret == MB_INVALID) {
 		/* Reset, treat as single character */
@@ -5380,6 +5419,7 @@ mb_metastrlenend(char *ptr, int width, char *eptr)
 		num++;
 	    laststart = ptr;
 	    num_in_char = 0;
+	    complete = 1;
 	}
     }
 

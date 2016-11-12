@@ -47,10 +47,19 @@ int vilinerange;
 
 /* last vi change buffer, for vi change repetition */
 
+/*
+ * vichgbufsz: Allocated size of vichgbuf.
+ * vichgbufptr: Length in use.
+ * vichgflag: true whilst inputting a vi normal mode; causes it to be
+ *   accumulated in vichgbuf, incrementing vichgbufptr.
+ */
+
 /**/
 int vichgbufsz, vichgbufptr, vichgflag;
 
 /*
+ * The bytes that make up the current vi command.  See vichgbuf* above.
+ *
  * Examination of the code suggests vichgbuf is consistently tied
  * to raw byte input, so it is left as a character array rather
  * than turned into wide characters.  In particular, when we replay
@@ -71,7 +80,7 @@ static int inrepeat, vichgrepeat;
  * im: >= 0: is an insertmode
  *    -1: skip setting insert mode
  *    -2: entering viins at start of editing from clean --- don't use
- *        inrepeat or lastchar, synthesise an i to enter insert mode.
+ *        inrepeat or keybuf, synthesise an entry to insert mode.
  */
 
 /**/
@@ -91,14 +100,16 @@ startvichange(int im)
 	lastmod = zmod;
 	if (vichgbuf)
 	    free(vichgbuf);
-	vichgbuf = (char *)zalloc(vichgbufsz = 16);
+	vichgbuf = (char *)zalloc(vichgbufsz = 16 + keybuflen);
 	if (im == -2) {
 	    vichgbuf[0] =
 		zlell ? (insmode ? (zlecs < zlell ? 'i' : 'a') : 'R') : 'o';
+	    vichgbuf[1] = '\0';
+	    vichgbufptr = 1;
 	} else {
-	    vichgbuf[0] = lastchar;
+	    strcpy(vichgbuf, keybuf);
+	    unmetafy(vichgbuf, &vichgbufptr);
 	}
-	vichgbufptr = 1;
 	vichgrepeat = 0;
     }
 }
@@ -780,7 +791,7 @@ int
 virepeatchange(UNUSED(char **args))
 {
     /* make sure we have a change to repeat */
-    if (!vichgbuf || vichgflag)
+    if (!vichgbuf || vichgflag || virangeflag)
 	return 1;
     /* restore or update the saved count and buffer */
     if (zmod.flags & MOD_MULT) {

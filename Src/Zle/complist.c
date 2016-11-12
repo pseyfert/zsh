@@ -347,9 +347,10 @@ getcoldef(char *s)
 	    char sav = p[1];
 
 	    p[1] = '\0';
+	    s = metafy(s, -1, META_USEHEAP);
 	    tokenize(s);
 	    gprog = patcompile(s, 0, NULL);
-	    p[1]  =sav;
+	    p[1] = sav;
 
 	    s = p + 1;
 	}
@@ -415,6 +416,7 @@ getcoldef(char *s)
 		break;
 	    *s++ = '\0';
 	}
+	p = metafy(p, -1, META_USEHEAP);
 	tokenize(p);
 	if ((prog = patcompile(p, 0, NULL))) {
 	    Patcol pc, po;
@@ -662,7 +664,9 @@ clprintfmt(char *p, int ml)
 
     initiscol();
 
-    for (; *p; p++) {
+    while (*p) {
+	convchar_t chr;
+	int chrlen = MB_METACHARLENCONV(p, &chr);
 	doiscol(i++);
 	cc++;
 	if (*p == '\n') {
@@ -673,11 +677,16 @@ clprintfmt(char *p, int ml)
 	if (ml == mlend - 1 && (cc % zterm_columns) == zterm_columns - 1)
 	    return 0;
 
-	if (*p == Meta) {
+	while (chrlen) {
+	    if (*p == Meta) {
+		p++;
+		chrlen--;
+		putc(*p ^ 32, shout);
+	    } else
+		putc(*p, shout);
+	    chrlen--;
 	    p++;
-	    putc(*p ^ 32, shout);
-	} else
-	    putc(*p, shout);
+	}
 	if ((beg = !(cc % zterm_columns)))
 	    ml++;
 	if (mscroll && !(cc % zterm_columns) &&

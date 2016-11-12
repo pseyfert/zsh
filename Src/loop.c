@@ -439,13 +439,12 @@ execwhile(Estate state, UNUSED(int do_exec))
             if (!((lastval == 0) ^ isuntil)) {
                 if (breaks)
                     breaks--;
-                lastval = oldval;
+		if (!retflag)
+		    lastval = oldval;
                 break;
             }
-            if (retflag) {
-                lastval = oldval;
+            if (retflag)
                 break;
-            }
 
 	    /* In case the loop body is also a functional no-op,
 	     * make sure signal handlers recognize ^C as above. */
@@ -570,7 +569,8 @@ execif(Estate state, int do_exec)
 	cmdpop();
     } else {
 	noerrexit = olderrexit;
-	lastval = 0;
+	if (!retflag)
+	    lastval = 0;
     }
     state->pc = end;
 

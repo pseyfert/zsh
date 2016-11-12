@@ -2008,11 +2008,12 @@ typeset_single(char *cname, char *pname, Param pm, UNUSED(int func),
      * handled in createparam().  Here we just avoid using it for the
      * present tests if it's unset.
      *
-     * POSIXBUILTINS horror: we need to retain the 'readonly' flag
-     * of an unset parameter.
+     * POSIXBUILTINS horror: we need to retain the 'readonly' or 'export'
+     * flags of an unset parameter.
      */
     usepm = pm && (!(pm->node.flags & PM_UNSET) ||
-		   (isset(POSIXBUILTINS) && (pm->node.flags & PM_READONLY)));
+		   (isset(POSIXBUILTINS) &&
+		    (pm->node.flags & (PM_READONLY|PM_EXPORTED))));
 
     /*
      * We need to compare types with an existing pm if special,
@@ -2135,7 +2136,8 @@ typeset_single(char *cname, char *pname, Param pm, UNUSED(int func),
 	/*
 	 * Stricter rules about retaining readonly attribute in this case.
 	 */
-	if ((on & PM_READONLY) && (!usepm || (pm->node.flags & PM_UNSET)) &&
+	if ((on & (PM_READONLY|PM_EXPORTED)) &&
+	    (!usepm || (pm->node.flags & PM_UNSET)) &&
 	    !ASG_VALUEP(asg))
 	    on |= PM_UNSET;
 	else if (usepm && (pm->node.flags & PM_READONLY) &&
@@ -2143,6 +2145,10 @@ typeset_single(char *cname, char *pname, Param pm, UNUSED(int func),
 	    zerr("read-only variable: %s", pm->node.nam);
 	    return NULL;
 	}
+	/* This is handled by createparam():
+	if (usepm && (pm->node.flags & PM_EXPORTED) && !(off & PM_EXPORTED))
+	    on |= PM_EXPORTED;
+	*/
     }
 
     /*
@@ -4081,10 +4087,11 @@ bin_print(char *name, char **args, Options ops, int func)
 {
     int flen, width, prec, type, argc, n, narg, curlen = 0;
     int nnl = 0, fmttrunc = 0, ret = 0, maxarg = 0, nc = 0;
-    int flags[6], *len;
+    int flags[6], *len, visarr = 0;
     char *start, *endptr, *c, *d, *flag, *buf = NULL, spec[14], *fmt = NULL;
     char **first, **argp, *curarg, *flagch = "'0+- #", save = '\0', nullstr = '\0';
     size_t rcount = 0, count = 0;
+    size_t *cursplit, *splits = 0;
     FILE *fout = stdout;
 #ifdef HAVE_OPEN_MEMSTREAM
     size_t mcount;
@@ -4116,7 +4123,7 @@ bin_print(char *name, char **args, Options ops, int func)
             return 1; \
         } \
         unlink(tmpf); \
-        if ((fout = fdopen(tempfd, "w+")) == NULL) { \
+        if ((FOUT = fdopen(tempfd, "w+")) == NULL) { \
             close(tempfd); \
             zwarnnam(name, "can't open temp file: %e", errno); \
             return 1; \
@@ -4545,6 +4552,7 @@ bin_print(char *name, char **args, Options ops, int func)
 		    short *words;
 		    if (nwords > 1) {
 			zwarnnam(name, "option -S takes a single argument");
+			unqueue_signals();
 			return 1;
 		    }
 		    words = NULL;
@@ -4614,7 +4622,8 @@ bin_print(char *name, char **args, Options ops, int func)
 			  OPT_ISSET(ops,'N') ? '\0' : ' ', fout);
 	    }
 	}
-	if (!(OPT_ISSET(ops,'n') || OPT_ISSET(ops, 'v') || nnl))
+	if (!(OPT_ISSET(ops,'n') || nnl ||
+	    (OPT_ISSET(ops, 'v') && !OPT_ISSET(ops, 'l'))))
 	    fputc(OPT_ISSET(ops,'N') ? '\0' : '\n', fout);
 	if (IS_MSTREAM(fout) && (rcount = READ_MSTREAM(buf,fout)) == -1)
 	    ret = 1;
@@ -4641,11 +4650,23 @@ bin_print(char *name, char **args, Options ops, int func)
      * special cases of printing to a ZLE buffer or the history, however.
      */
 
+    if (OPT_ISSET(ops,'v')) {
+	struct value vbuf;
+	char* s = OPT_ARG(ops,'v');
+	Value v = getvalue(&vbuf, &s, 0);
+	visarr = v && PM_TYPE(v->pm->node.flags) == PM_ARRAY;
+    }
     /* printf style output */
     *spec = '%';
     argp = args;
     do {
     	rcount = count;
+	if (argp > args && visarr) { /* reusing format string */
+	    if (!splits)
+		cursplit = splits = (size_t *)zhalloc(sizeof(size_t) *
+			(arrlen(args) / (argp - args) + 1));
+	    *cursplit++ = count;
+	}
     	if (maxarg) {
 	    first += maxarg;
 	    argc -= maxarg;
@@ -5013,18 +5034,30 @@ bin_print(char *name, char **args, Options ops, int func)
 	    if (buf)
 		free(buf);
 	} else {
-	    stringval = metafy(buf, rcount, META_REALLOC);
-	    if (OPT_ISSET(ops,'z')) {
-		zpushnode(bufstack, stringval);
-	    } else if (OPT_ISSET(ops,'v')) {
-		setsparam(OPT_ARG(ops, 'v'), stringval);
+	    if (visarr) {
+		char **arrayval = zshcalloc((cursplit - splits + 2) * sizeof(char *));
+		for (;cursplit >= splits; cursplit--) {
+		    int start = cursplit == splits ? 0 : cursplit[-1];
+		    arrayval[cursplit - splits] =
+			    metafy(buf + start, count - start, META_DUP);
+		    count = start;
+		}
+		setaparam(OPT_ARG(ops, 'v'), arrayval);
+		free(buf);
 	    } else {
-		ent = prepnexthistent();
-		ent->node.nam = stringval;
-		ent->stim = ent->ftim = time(NULL);
-		ent->node.flags = 0;
-		ent->words = (short *)NULL;
-		addhistnode(histtab, ent->node.nam, ent);
+		stringval = metafy(buf, rcount, META_REALLOC);
+		if (OPT_ISSET(ops,'z')) {
+		    zpushnode(bufstack, stringval);
+		} else if (OPT_ISSET(ops,'v')) {
+		    setsparam(OPT_ARG(ops, 'v'), stringval);
+		} else {
+		    ent = prepnexthistent();
+		    ent->node.nam = stringval;
+		    ent->stim = ent->ftim = time(NULL);
+		    ent->node.flags = 0;
+		    ent->words = (short *)NULL;
+		    addhistnode(histtab, ent->node.nam, ent);
+		}
 	    }
 	}
 	unqueue_signals();
@@ -5402,6 +5435,11 @@ zexit(int val, int from_where)
 	}
     }
     lastval = val;
+    /*
+     * Now we are committed to exiting any previous state
+     * is irrelevant.  Ensure trap can run.
+     */
+    errflag = intrap = 0;
     if (sigtrapped[SIGEXIT])
 	dotrap(SIGEXIT);
     callhookfunc("zshexit", NULL, 1, NULL);

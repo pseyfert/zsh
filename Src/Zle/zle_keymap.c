@@ -135,7 +135,10 @@ mod_export HashTable keymapnamtab;
 /**/
 char *keybuf;
 
-static int keybuflen, keybufsz = 20;
+/**/
+int keybuflen;
+
+static int keybufsz = 20;
 
 /* last command executed with execute-named-command */
 
@@ -1618,11 +1621,18 @@ getkeymapcmd(Keymap km, Thingy *funcp, char **strp)
     else
 	lastchar = lastc;
     if(lastlen != keybuflen) {
+	/*
+	 * We want to keep only the first lastlen bytes of the key
+	 * buffer in the key buffer that were marked as used by the key
+	 * binding above, and make the rest available for input again.
+	 * That rest (but not what we are keeping) needs to be
+	 * unmetafied.
+	 */
 	unmetafy(keybuf + lastlen, &keybuflen);
 	ungetbytes(keybuf+lastlen, keybuflen);
 	if(vichgflag)
 	    vichgbufptr -= keybuflen;
-	keybuf[lastlen] = 0;
+	keybuf[keybuflen = lastlen] = 0;
     }
     *funcp = func;
     *strp = str;

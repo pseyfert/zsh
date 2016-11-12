@@ -26,7 +26,7 @@ _yum()
     '*::yum command:_yum_command'
 }
 
-(( $+functions[_yum_command] )) || _yum_command() 
+(( $+functions[_yum_command] )) || _yum_command()
 {
   local -a _yum_cmds
   _yum_cmds=(

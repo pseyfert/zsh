@@ -940,7 +940,10 @@ createparam(char *name, int flags)
 		zerr("%s: restricted", name);
 		return NULL;
 	    }
-	    if (!(oldpm->node.flags & PM_UNSET) || (oldpm->node.flags & PM_SPECIAL)) {
+	    if (!(oldpm->node.flags & PM_UNSET) ||
+		(oldpm->node.flags & PM_SPECIAL) ||
+		/* POSIXBUILTINS horror: we need to retain 'export' flags */
+		(isset(POSIXBUILTINS) && (oldpm->node.flags & PM_EXPORTED))) {
 		oldpm->node.flags &= ~PM_UNSET;
 		if ((oldpm->node.flags & PM_SPECIAL) && oldpm->ename) {
 		    Param altpm =
@@ -2057,6 +2060,7 @@ getstrvalue(Value v)
 {
     char *s, **ss;
     char buf[BDIGBUFSIZE];
+    int len;
 
     if (!v)
 	return hcalloc(1);
@@ -2233,23 +2237,27 @@ getstrvalue(Value v)
     if (v->start == 0 && v->end == -1)
 	return s;
 
+    len = strlen(s);
     if (v->start < 0) {
-	v->start += strlen(s);
+	v->start += len;
 	if (v->start < 0)
 	    v->start = 0;
     }
     if (v->end < 0) {
-	v->end += strlen(s);
+	v->end += len;
 	if (v->end >= 0) {
 	    char *eptr = s + v->end;
 	    if (*eptr)
 		v->end += MB_METACHARLEN(eptr);
 	}
     }
-    s = (v->start > (int)strlen(s)) ? dupstring("") : dupstring(s + v->start);
+
+    s = (v->start > len) ? dupstring("") :
+	dupstring_wlen(s + v->start, len - v->start);
+
     if (v->end <= v->start)
 	s[0] = '\0';
-    else if (v->end - v->start <= (int)strlen(s))
+    else if (v->end - v->start <= len - v->start)
 	s[v->end - v->start] = '\0';
 
     return s;
@@ -2282,14 +2290,23 @@ getarrvalue(Value v)
 	v->start += arrlen(s);
     if (v->end < 0)
 	v->end += arrlen(s) + 1;
-    if (arrlen_lt(s, v->start) || v->start < 0)
-	s = arrdup(nular);
-    else
-	s = arrdup(s + v->start);
-    if (v->end <= v->start)
-	s[0] = NULL;
-    else if (arrlen_ge(s, v->end - v->start))
-	s[v->end - v->start] = NULL;
+
+    /* Null if 1) array too short, 2) index still negative */
+    if (arrlen_lt(s, v->start) || v->start < 0) {
+	s = arrdup_max(nular, 1);
+    } else if (v->end <= v->start) {
+        s = arrdup_max(nular, 0);
+    } else {
+        /* Copy to a point before the end of the source array:
+         * arrdup_max will copy at most v->end - v->start elements,
+         * starting from v->start element. Original code said:
+	 *  s[v->end - v->start] = NULL
+         * which means that there are exactly the same number of
+         * elements as the value of the above *0-based* index.
+         */
+	s = arrdup_max(s + v->start, v->end - v->start);
+    }
+
     return s;
 }
 
@@ -2420,8 +2437,8 @@ assignstrvalue(Value v, char *val, int flags)
 	    char *z, *x;
 	    int zlen;
 
-	    z = dupstring(v->pm->gsu.s->getfn(v->pm));
-	    zlen = strlen(z);
+	    z = dupstring_glen(v->pm->gsu.s->getfn(v->pm), (unsigned*) &zlen);
+
 	    if ((v->flags & VALFLAG_INV) && unset(KSHARRAYS))
 		v->start--, v->end--;
 	    if (v->start < 0) {
@@ -2639,20 +2656,25 @@ setarrvalue(Value v, char **val)
 	if (v->end <= pre_assignment_length)
 	    post_assignment_length += pre_assignment_length - v->end + 1;
 
-	p = new = (char **) zshcalloc(sizeof(char *)
-		                      * (post_assignment_length + 1));
+	p = new = (char **) zalloc(sizeof(char *)
+		                   * (post_assignment_length + 1));
 
 	for (i = 0; i < v->start; i++)
 	    *p++ = i < pre_assignment_length ? ztrdup(*q++) : ztrdup("");
-	for (r = val; *r;)
-	    *p++ = ztrdup(*r++);
+	for (r = val; *r;) {
+            /* Give away ownership of the string */
+	    *p++ = *r++;
+	}
 	if (v->end < pre_assignment_length)
 	    for (q = old + v->end; *q;)
 		*p++ = ztrdup(*q++);
 	*p = NULL;
 
 	v->pm->gsu.a->setfn(v->pm, new);
-	freearray(val);
+
+        /* Ownership of all strings has been
+         * given away, can plainly free */
+	free(val);
     }
 }
 
@@ -5225,10 +5247,6 @@ printparamvalue(Param p, int printflags)
 {
     char *t, **u;
 
-    if (p->node.flags & PM_AUTOLOAD) {
-	putchar('\n');
-	return;
-    }
     if (printflags & PRINT_KV_PAIR)
 	putchar(' ');
     else
@@ -5312,9 +5330,13 @@ printparamnode(HashNode hn, int printflags)
 	     */
 	    printflags |= PRINT_NAMEONLY;
 	}
+	else if (p->node.flags & PM_EXPORTED)
+	    printflags |= PRINT_NAMEONLY;
 	else
 	    return;
     }
+    if (p->node.flags & PM_AUTOLOAD)
+	printflags |= PRINT_NAMEONLY;
 
     if (printflags & PRINT_TYPESET) {
 	if ((p->node.flags & (PM_READONLY|PM_SPECIAL)) ==
@@ -5326,7 +5348,15 @@ printparamnode(HashNode hn, int printflags)
 	     */
 	    return;
 	}
-	printf("typeset ");
+	if (locallevel && p->level >= locallevel) {
+	    printf("typeset ");	    /* printf("local "); */
+	} else if ((p->node.flags & PM_EXPORTED) &&
+		   !(p->node.flags & (PM_ARRAY|PM_HASHED))) {
+	    printf("export ");
+	} else if (locallevel) {
+	    printf("typeset -g ");
+	} else
+	    printf("typeset ");
     }
 
     /* Print the attributes of the parameter */
@@ -5339,7 +5369,9 @@ printparamnode(HashNode hn, int printflags)
 	    if (pmptr->flags & PMTF_TEST_LEVEL) {
 		if (p->level)
 		    doprint = 1;
-	    } else if (p->node.flags & pmptr->binflag)
+	    } else if ((pmptr->binflag != PM_EXPORTED || p->level ||
+			(p->node.flags & (PM_LOCAL|PM_ARRAY|PM_HASHED))) &&
+		       (p->node.flags & pmptr->binflag))
 		doprint = 1;
 
 	    if (doprint) {
@@ -5351,9 +5383,8 @@ printparamnode(HashNode hn, int printflags)
 			}
 			putchar(pmptr->typeflag);
 		    }
-		} else {
+		} else
 		    printf("%s ", pmptr->string);
-		}
 		if ((pmptr->flags & PMTF_USE_BASE) && p->base) {
 		    printf("%d ", p->base);
 		    doneminus = 0;
