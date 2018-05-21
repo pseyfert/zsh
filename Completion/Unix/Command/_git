@@ -3600,10 +3600,7 @@ _git-remote () {
             ':repository:->repository' && ret=0
 	  case $state in
 	    (repository)
-            _alternative \
-              'local-repositories::__git_local_repositories' \
-              'remote-repositories::__git_remote_repositories' \
-	      'urls::_urls' && ret=0
+            __git_repositories_or_url && ret=0
 	    ;;
 	  esac
           ;;
@@ -3635,13 +3632,17 @@ _git-remote () {
           ;;
         (set-url)
           # TODO: Old URL should be one of those defined for the remote.
+          _message "the line is: $line"
           _arguments -S -s \
             '(3)--push[manipulate push URLs instead of fetch URLs]' \
             '--add[add URL to those already defined]' \
             '(3)--delete[delete all matching URLs]' \
             ': :__git_remotes' \
-            ':new url:_urls' \
-            ':old url:_urls' && ret=0
+            ':new url:__git_repositories_or_url' \
+            ':old url:__git_current_remote_url $line[1]' \
+                      && ret=0
+            #":old url:_call_program current-remote-url git remote get-url $line[2]" \
+            # ${(2)@[2,-1]}' \
           ;;
         (show)
           _arguments -S \
@@ -6947,6 +6948,22 @@ __git_local_repositories () {
   local expl
 
   _wanted local-repositories expl 'local repositories' _directories
+}
+
+(( $+functions[__git_repositories_or_url] )) ||
+__git_repositories_or_url () {
+  _alternative \
+    'repositories::__git_repositories' \
+    'url::_urls'
+}
+
+(( $+functions[__git_current_remote_url] )) ||
+__git_current_remote_url () {
+    # TODO: is ${(@)*[1,4]} a proper replacement for $* and passing extra arguments?
+    # TODO: what to do when there are arguments in the command line such that $line[1] does not return the origin
+    # TODO: add --push to the `git remote get-url` command in case `git remote set-url --push origin <new url> <TAB>` is completed
+  _wanted remote-urls expl 'current urls' \
+      compadd ${(@)*[1,4]} - ${${(0)"$(_call_program remote-urls git remote get-url $5)"}%%$'\n'*}
 }
 
 (( $+functions[__git_any_repositories] )) ||
