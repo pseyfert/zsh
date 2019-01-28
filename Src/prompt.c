@@ -116,6 +116,72 @@ static Buf_vars bv;
  */
 
 static void
+promptpath_escape_whitespace(char *p, int npath, int tilde)
+{
+    char *modp = p;
+    Nameddir nd;
+
+    if (tilde && ((nd = finddir(p))))
+	modp = tricat("~", nd->node.nam, p + strlen(nd->dir));
+
+    size_t whitespaces = 0;
+    for (size_t i = 0 ; i < strlen(modp) ; ++i) {
+        if (modp[i] == ' ') whitespaces++;
+    }
+
+    if (whitespaces > 0) {
+        char *tmpp = (char *) zalloc(strlen(modp) + 1 + whitespaces);
+        size_t o = 0;
+        for (size_t i = 0; i < strlen(modp); ++i) {
+            if (modp[i] == ' ') {
+                tmpp[o++] = '\\';
+            }
+            tmpp[o++] = modp[i];
+        }
+        for ( ; o < 1 + strlen(modp) + whitespaces ; ++o) {
+            tmpp[o] = '\0';
+        }
+        if (p!= modp) {
+            zsfree(modp);
+        }
+        modp = tmpp;
+    }
+
+    if (npath) {
+	char *sptr;
+	if (npath > 0) {
+	    for (sptr = modp + strlen(modp); sptr > modp; sptr--) {
+		if (*sptr == '/' && !--npath) {
+		    sptr++;
+		    break;
+		}
+	    }
+	    if (*sptr == '/' && sptr[1] && sptr != modp)
+		sptr++;
+	    stradd(sptr);
+	} else {
+	    char cbu;
+	    for (sptr = modp+1; *sptr; sptr++)
+		if (*sptr == '/' && !++npath)
+		    break;
+	    cbu = *sptr;
+	    *sptr = 0;
+	    stradd(modp);
+	    *sptr = cbu;
+	}
+    } else
+	stradd(modp);
+
+    if (p != modp)
+	zsfree(modp);
+}
+
+/*
+ * Expand path p; maximum is npath segments where 0 means the whole path.
+ * If tilde is 1, try and find a named directory to use.
+ */
+
+static void
 promptpath(char *p, int npath, int tilde)
 {
     char *modp = p;
@@ -307,6 +373,7 @@ putpromptchar(int doprint, int endchar, zattr *txtchangep)
 		switch (tc = *bv->fm) {
 		case 'c':
 		case '.':
+		case 'p':
 		case '~':
 		    if ((nd = finddir(ss))) {
 			arg--;
@@ -450,6 +517,9 @@ putpromptchar(int doprint, int endchar, zattr *txtchangep)
 		    continue;
 		}
 	    switch (*bv->fm) {
+	    case 'p':
+		promptpath_escape_whitespace(pwd, arg, 1);
+		break;
 	    case '~':
 		promptpath(pwd, arg, 1);
 		break;
