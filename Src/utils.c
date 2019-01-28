@@ -30,6 +30,8 @@
 #include "zsh.mdh"
 #include "utils.pro"
 
+#include "high.h"
+
 /* name of script being sourced */
 
 /**/
@@ -3202,9 +3204,15 @@ spckword(char **s, int hist, int cmd, int ask)
 		x = 'n';
 	    } else if (shout) {
 		char *pptbuf;
-		pptbuf = promptexpand(sprompt, 0, best, guess, NULL);
+                char *out_best;
+                char *out_guess;
+                high(best, guess, &out_best, &out_guess);
+		pptbuf = promptexpand(sprompt, 0, out_best, out_guess, NULL);
+		pptbuf = promptexpand(pptbuf, 0, NULL, NULL, NULL);
 		zputs(pptbuf, shout);
 		free(pptbuf);
+                free(out_best);
+                free(out_guess);
 		fflush(shout);
 		zbeep();
 		x = getquery("nyae", 0);
